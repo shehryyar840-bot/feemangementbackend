@@ -1,0 +1,237 @@
+// This is your Prisma schema file
+// Learn more: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+/*
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+*/
+
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+// ============================================
+// AUTHENTICATION & USER MANAGEMENT
+// ============================================
+
+// Role Enum
+enum Role {
+  ADMIN
+  TEACHER
+}
+
+// User Model - Authentication and account management
+model User {
+  id          Int       @id @default(autoincrement())
+  email       String    @unique
+  password    String    // Hashed with bcrypt
+  name        String
+  role        Role      @default(TEACHER)
+  isActive    Boolean   @default(true)
+
+  // Relations
+  teacher     Teacher?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([email])
+  @@index([role])
+}
+
+// Teacher Profile Model
+model Teacher {
+  id              Int       @id @default(autoincrement())
+  userId          Int       @unique
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  employeeId      String    @unique
+  phoneNumber     String
+  address         String?
+  qualification   String?
+  joiningDate     DateTime  @default(now())
+
+  // Relations
+  classTeachers   ClassTeacher[]
+  attendances     Attendance[]
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([employeeId])
+  @@index([userId])
+}
+
+// Class-Teacher Assignment (Many-to-Many)
+model ClassTeacher {
+  id          Int      @id @default(autoincrement())
+  teacherId   Int
+  teacher     Teacher  @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  classId     Int
+  class       Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
+
+  subject     String?  // Optional: specific subject
+  isPrimary   Boolean  @default(false) // Class teacher or subject teacher
+
+  createdAt   DateTime @default(now())
+
+  @@unique([teacherId, classId])
+  @@index([teacherId])
+  @@index([classId])
+}
+
+// ============================================
+// ATTENDANCE MANAGEMENT
+// ============================================
+
+// Attendance Status Enum
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+}
+
+// Attendance Model
+model Attendance {
+  id          Int               @id @default(autoincrement())
+  studentId   Int
+  student     Student           @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  date        DateTime
+  status      AttendanceStatus  @default(PRESENT)
+
+  markedBy    Int
+  teacher     Teacher           @relation(fields: [markedBy], references: [id])
+
+  remarks     String?
+
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@unique([studentId, date])
+  @@index([studentId])
+  @@index([date])
+  @@index([status])
+  @@index([markedBy])
+}
+
+// ============================================
+// SCHOOL MANAGEMENT (Existing Models)
+// ============================================
+
+// Class Model - Normalized class information
+model Class {
+  id          Int            @id @default(autoincrement())
+  name        String         @unique  // e.g., "Class 1", "Class 2", "Nursery"
+  description String?
+  isActive    Boolean        @default(true)
+
+  // Relations
+  students       Student[]
+  feeStructure   FeeStructure?
+  classTeachers  ClassTeacher[]
+
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([name])
+}
+
+// Student Model - Stores basic student information
+model Student {
+  id          Int         @id @default(autoincrement())
+  name        String
+  fatherName  String
+  classId     Int
+  class       Class       @relation(fields: [classId], references: [id])
+  rollNumber  String      @unique
+  phoneNumber String
+  address     String?
+  admissionDate DateTime  @default(now())
+  isActive    Boolean     @default(true)
+
+  // Individual Student Fee Structure
+  tuitionFee      Float    @default(0)
+  labFee          Float    @default(0)
+  libraryFee      Float    @default(0)
+  sportsFee       Float    @default(0)
+  examFee         Float    @default(0)
+  otherFee        Float    @default(0)
+  totalMonthlyFee Float    @default(0)
+
+  // Relations
+  feeRecords   FeeRecord[]
+  attendances  Attendance[]
+
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([classId])
+  @@index([rollNumber])
+}
+
+// Fee Structure Model - Defines fees per class (template)
+model FeeStructure {
+  id              Int      @id @default(autoincrement())
+  classId         Int      @unique
+  class           Class    @relation(fields: [classId], references: [id])
+
+  tuitionFee      Float
+  labFee          Float    @default(0)
+  libraryFee      Float    @default(0)
+  sportsFee       Float    @default(0)
+  examFee         Float    @default(0)
+  otherFee        Float    @default(0)
+  totalMonthlyFee Float    // Auto-calculated sum
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([classId])
+}
+
+// Fee Record Model - Individual monthly payment records
+model FeeRecord {
+  id              Int      @id @default(autoincrement())
+  studentId       Int
+  student         Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  month           String   // e.g., "January", "February"
+  year            Int      // e.g., 2024, 2025
+
+  // Fee Details
+  tuitionFee      Float
+  labFee          Float    @default(0)
+  libraryFee      Float    @default(0)
+  sportsFee       Float    @default(0)
+  examFee         Float    @default(0)
+  otherFee        Float    @default(0)
+  totalFee        Float    // Total amount to be paid
+
+  // Payment Details
+  amountPaid      Float    @default(0)
+  balance         Float    // totalFee - amountPaid
+  status          String   @default("Pending") // "Paid", "Pending", "Overdue"
+
+  paymentDate     DateTime?
+  paymentMode     String?  // "Cash", "Online", "Cheque"
+  dueDate         DateTime
+
+  remarks         String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([studentId, month, year])
+  @@index([studentId])
+  @@index([status])
+  @@index([month, year])
+}
