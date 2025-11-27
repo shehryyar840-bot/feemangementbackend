@@ -150,6 +150,7 @@ model Student {
   id          Int         @id @default(autoincrement())
   name        String
   fatherName  String
+  dateOfBirth DateTime?
   classId     Int
   class       Class       @relation(fields: [classId], references: [id])
   rollNumber  String      @unique

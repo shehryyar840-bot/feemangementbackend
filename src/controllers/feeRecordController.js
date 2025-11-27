@@ -259,6 +259,213 @@ const getPendingFeeRecords = async (req, res) => {
   }
 };
 
+// Generate monthly fee records for students
+const generateMonthlyFeeRecords = async (req, res) => {
+  try {
+    const { month, year, classId, studentIds, dueDate, examFee, otherFee } = req.body;
+
+    // Validate required fields
+    if (!month || !year) {
+      return res.status(400).json({
+        success: false,
+        error: 'Month and year are required'
+      });
+    }
+
+    // Parse one-time fees
+    const oneTimeExamFee = parseFloat(examFee) || 0;
+    const oneTimeOtherFee = parseFloat(otherFee) || 0;
+
+    // Determine which students to generate fees for
+    let studentsToProcess;
+    if (studentIds && studentIds.length > 0) {
+      // Generate for specific students
+      studentsToProcess = await prisma.student.findMany({
+        where: {
+          id: { in: studentIds },
+          isActive: true
+        },
+        include: { class: true }
+      });
+    } else if (classId) {
+      // Generate for all students in a class
+      studentsToProcess = await prisma.student.findMany({
+        where: {
+          classId: parseInt(classId),
+          isActive: true
+        },
+        include: { class: true }
+      });
+    } else {
+      // Generate for all active students
+      studentsToProcess = await prisma.student.findMany({
+        where: { isActive: true },
+        include: { class: true }
+      });
+    }
+
+    if (studentsToProcess.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No active students found to generate fee records'
+      });
+    }
+
+    // Calculate due date (default to 10th of the month)
+    const dueDateObj = dueDate
+      ? new Date(dueDate)
+      : new Date(parseInt(year), getMonthNumber(month), 10);
+
+    const createdRecords = [];
+    const skippedRecords = [];
+
+    for (const student of studentsToProcess) {
+      // Check if record already exists
+      const existingRecord = await prisma.feeRecord.findUnique({
+        where: {
+          studentId_month_year: {
+            studentId: student.id,
+            month: month,
+            year: parseInt(year)
+          }
+        }
+      });
+
+      if (existingRecord) {
+        skippedRecords.push({
+          studentId: student.id,
+          studentName: student.name,
+          reason: 'Record already exists'
+        });
+        continue;
+      }
+
+      // Create fee record with recurring fees + one-time fees
+      const recurringTotal = student.tuitionFee + student.labFee +
+                            student.libraryFee + student.sportsFee;
+      const totalFee = recurringTotal + oneTimeExamFee + oneTimeOtherFee;
+
+      const feeRecord = await prisma.feeRecord.create({
+        data: {
+          studentId: student.id,
+          month: month,
+          year: parseInt(year),
+          tuitionFee: student.tuitionFee,
+          labFee: student.labFee,
+          libraryFee: student.libraryFee,
+          sportsFee: student.sportsFee,
+          examFee: oneTimeExamFee,
+          otherFee: oneTimeOtherFee,
+          totalFee: totalFee,
+          balance: totalFee,
+          dueDate: dueDateObj,
+          status: 'Pending'
+        },
+        include: {
+          student: {
+            include: { class: true }
+          }
+        }
+      });
+
+      createdRecords.push(feeRecord);
+    }
+
+    res.status(201).json({
+      success: true,
+      data: {
+        created: createdRecords,
+        skipped: skippedRecords
+      },
+      message: `Generated ${createdRecords.length} fee record(s) for ${month} ${year}. Skipped ${skippedRecords.length} existing record(s).`
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
+
+// Add one-time fees to an existing fee record
+const addOneTimeFees = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { examFee, otherFee, remarks } = req.body;
+
+    // Get current fee record
+    const currentRecord = await prisma.feeRecord.findUnique({
+      where: { id: parseInt(id) }
+    });
+
+    if (!currentRecord) {
+      return res.status(404).json({
+        success: false,
+        error: 'Fee record not found'
+      });
+    }
+
+    // Calculate new fees
+    const newExamFee = currentRecord.examFee + (parseFloat(examFee) || 0);
+    const newOtherFee = currentRecord.otherFee + (parseFloat(otherFee) || 0);
+
+    // Recalculate total fee and balance
+    const newTotalFee = currentRecord.tuitionFee + currentRecord.labFee +
+                       currentRecord.libraryFee + currentRecord.sportsFee +
+                       newExamFee + newOtherFee;
+    const newBalance = newTotalFee - currentRecord.amountPaid;
+
+    // Determine status
+    let status = currentRecord.status;
+    if (newBalance <= 0) {
+      status = 'Paid';
+    } else if (new Date() > currentRecord.dueDate) {
+      status = 'Overdue';
+    } else {
+      status = 'Pending';
+    }
+
+    // Update fee record
+    const updatedRecord = await prisma.feeRecord.update({
+      where: { id: parseInt(id) },
+      data: {
+        examFee: newExamFee,
+        otherFee: newOtherFee,
+        totalFee: newTotalFee,
+        balance: newBalance,
+        status,
+        remarks: remarks || currentRecord.remarks
+      },
+      include: {
+        student: {
+          include: { class: true }
+        }
+      }
+    });
+
+    res.json({
+      success: true,
+      data: updatedRecord,
+      message: `One-time fees added successfully. New total: Rs. ${newTotalFee}`
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
+
+// Helper function to convert month name to number
+function getMonthNumber(monthName) {
+  const months = {
+    'January': 0, 'February': 1, 'March': 2, 'April': 3,
+    'May': 4, 'June': 5, 'July': 6, 'August': 7,
+    'September': 8, 'October': 9, 'November': 10, 'December': 11
+  };
+  return months[monthName] || 0;
+}
+
 module.exports = {
   getAllFeeRecords,
   getFeeRecordById,
@@ -266,5 +473,7 @@ module.exports = {
   updateFeeRecordStatus,
   updateOverdueStatus,
   getOverdueFeeRecords,
-  getPendingFeeRecords
+  getPendingFeeRecords,
+  generateMonthlyFeeRecords,
+  addOneTimeFees
 };

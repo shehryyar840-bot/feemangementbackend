@@ -79,6 +79,7 @@ const createStudent = async (req, res) => {
     const {
       name,
       fatherName,
+      dateOfBirth,
       classId,
       rollNumber,
       phoneNumber,
@@ -87,9 +88,7 @@ const createStudent = async (req, res) => {
       tuitionFee,
       labFee,
       libraryFee,
-      sportsFee,
-      examFee,
-      otherFee
+      sportsFee
     } = req.body;
 
     // Check if roll number already exists
@@ -104,28 +103,23 @@ const createStudent = async (req, res) => {
       });
     }
 
-    // Calculate total monthly fee from individual components
+    // Calculate total monthly fee from RECURRING fees only (NOT including one-time fees)
+    // Recurring fees: tuition, lab, library, sports (charged every month)
+    // One-time fees: exam, other/books/paper fund (added manually when needed)
     const studentTuitionFee = parseFloat(tuitionFee) || 0;
     const studentLabFee = parseFloat(labFee) || 0;
     const studentLibraryFee = parseFloat(libraryFee) || 0;
     const studentSportsFee = parseFloat(sportsFee) || 0;
-    const studentExamFee = parseFloat(examFee) || 0;
-    const studentOtherFee = parseFloat(otherFee) || 0;
 
-    const totalMonthlyFee = studentTuitionFee + studentLabFee + studentLibraryFee +
-                            studentSportsFee + studentExamFee + studentOtherFee;
+    const totalMonthlyFee = studentTuitionFee + studentLabFee + studentLibraryFee + studentSportsFee;
 
-    // Create student with fee records for all 12 months
-    const currentYear = new Date().getFullYear();
-    const months = [
-      'January', 'February', 'March', 'April', 'May', 'June',
-      'July', 'August', 'September', 'October', 'November', 'December'
-    ];
-
+    // Create student WITHOUT auto-generating fee records
+    // Admin will manually generate fee records for each month
     const student = await prisma.student.create({
       data: {
         name,
         fatherName,
+        dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
         classId: parseInt(classId),
         rollNumber,
         phoneNumber,
@@ -135,41 +129,19 @@ const createStudent = async (req, res) => {
         labFee: studentLabFee,
         libraryFee: studentLibraryFee,
         sportsFee: studentSportsFee,
-        examFee: studentExamFee,
-        otherFee: studentOtherFee,
-        totalMonthlyFee: totalMonthlyFee,
-        feeRecords: {
-          create: months.map((month, index) => {
-            // Set due date as 10th of each month
-            const dueDate = new Date(currentYear, index, 10);
-
-            return {
-              month,
-              year: currentYear,
-              tuitionFee: studentTuitionFee,
-              labFee: studentLabFee,
-              libraryFee: studentLibraryFee,
-              sportsFee: studentSportsFee,
-              examFee: studentExamFee,
-              otherFee: studentOtherFee,
-              totalFee: totalMonthlyFee,
-              balance: totalMonthlyFee,
-              dueDate,
-              status: 'Pending'
-            };
-          })
-        }
+        examFee: 0, // One-time fees not stored in student model
+        otherFee: 0, // One-time fees not stored in student model
+        totalMonthlyFee: totalMonthlyFee
       },
       include: {
-        class: true,
-        feeRecords: true
+        class: true
       }
     });
 
     res.status(201).json({
       success: true,
       data: student,
-      message: `Student created successfully with ${months.length} fee records generated`
+      message: 'Student created successfully. Generate monthly fee records from the Fee Records page.'
     });
   } catch (error) {
     res.status(500).json({
@@ -186,6 +158,7 @@ const updateStudent = async (req, res) => {
     const {
       name,
       fatherName,
+      dateOfBirth,
       classId,
       phoneNumber,
       address,
@@ -244,6 +217,7 @@ const updateStudent = async (req, res) => {
       data: {
         name,
         fatherName,
+        dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
         classId: classId ? parseInt(classId) : undefined,
         phoneNumber,
         address,
